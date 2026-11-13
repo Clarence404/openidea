@@ -59,6 +59,55 @@ it("withdraws old interactive markers on reload and does not refresh on idle sta
   expect(mock.off).toHaveBeenCalledOnce();
 });
 
+it("asks an empty answer again: with growing delays on opening, once when it would remove the markers", async () => {
+  vi.useFakeTimers();
+  const marker = {
+    status: "ok",
+    data: [{ pluginId: "test", line: 0, icon: "navigate", tooltip: "to xml", target: null }],
+  };
+  const none = { status: "ok", data: [] };
+  // The provider was still starting (or ran past the editor's deadline) as the project opened.
+  mock.markers.mockResolvedValueOnce(none).mockResolvedValueOnce(none).mockResolvedValue(marker);
+  view = new EditorView({
+    parent: document.body,
+    state: EditorState.create({ doc: "mapper", extensions: pluginLineMarkerGutter({ doc: 1 } as EditorDocContext) }),
+  });
+  await vi.advanceTimersByTimeAsync(450);
+  expect(view.dom.querySelector(".cm-plugin-mapping-button")).toBeNull();
+  await vi.advanceTimersByTimeAsync(1500);
+  expect(mock.markers).toHaveBeenCalledTimes(2);
+  expect(view.dom.querySelector(".cm-plugin-mapping-button")).toBeNull();
+  await vi.advanceTimersByTimeAsync(3000);
+  expect(mock.markers).toHaveBeenCalledTimes(3);
+  expect(view.dom.querySelector(".cm-plugin-mapping-button")).not.toBeNull();
+
+  // An empty answer after an edit keeps the shown markers until a second answer confirms it.
+  mock.markers.mockResolvedValueOnce(none).mockResolvedValueOnce(none);
+  view.dispatch({ changes: { from: 6, insert: "s" } });
+  await vi.advanceTimersByTimeAsync(450);
+  expect(view.dom.querySelector(".cm-plugin-mapping-button")).not.toBeNull();
+  await vi.advanceTimersByTimeAsync(1500);
+  expect(mock.markers).toHaveBeenCalledTimes(5);
+  expect(view.dom.querySelector(".cm-plugin-mapping-button")).toBeNull();
+  await vi.advanceTimersByTimeAsync(60000);
+  expect(mock.markers).toHaveBeenCalledTimes(5);
+});
+
+it("stops asking a document without markers once the delays are used up", async () => {
+  vi.useFakeTimers();
+  mock.markers.mockResolvedValue({ status: "ok", data: [] });
+  view = new EditorView({
+    parent: document.body,
+    state: EditorState.create({ doc: "plain", extensions: pluginLineMarkerGutter({ doc: 1 } as EditorDocContext) }),
+  });
+  await vi.advanceTimersByTimeAsync(120000);
+  // The first answer and five more.
+  expect(mock.markers).toHaveBeenCalledTimes(6);
+  view.dispatch({ changes: { from: 5, insert: "!" } });
+  await vi.advanceTimersByTimeAsync(60000);
+  expect(mock.markers).toHaveBeenCalledTimes(7);
+});
+
 it("renders ordinary and custom registered icons alongside legacy marker aliases", async () => {
   vi.useFakeTimers();
   const icon = pluginIconName("markers", {

@@ -16,6 +16,14 @@ import { onMarkerIconsChanged, resolveMarkerIcon } from "./markerIcons";
 import styles from "@/editor/navigation/LineMarkers.module.css";
 
 const DEBOUNCE_MS = 400;
+/**
+ * An empty answer may only mean the providers were not ready: a plugin's first
+ * call starts it, and a call past the editor's deadline is dropped while the
+ * plugin finishes it (and fills its caches), which takes a while longer as a
+ * project opens. On opening, an empty answer is asked again after each of
+ * these delays until markers come; one that would remove shown markers, once.
+ */
+const RETRY_MS = [1500, 3000, 6000, 12000, 24000];
 
 const ICONS: Record<string, string> = {
   implemented: "gutter-implemented",
@@ -121,6 +129,8 @@ class MarkersPlugin {
   private generation = 0;
   private skipped = false;
   private shown = false;
+  /** Delays before asking an empty answer again, used up one by one. */
+  private retries: readonly number[] = RETRY_MS;
   private off: () => void;
 
   constructor(
@@ -173,6 +183,13 @@ class MarkersPlugin {
       this.skipped = !this.view.dom.isConnected;
       if (this.skipped) return;
       const placed = placeMarkers(text, resolved);
+      const [delay, ...later] = this.retries;
+      if (!placed.length && delay !== undefined) {
+        this.retries = later;
+        this.timer = setTimeout(() => void this.run(), delay);
+        return;
+      }
+      this.retries = placed.length ? RETRY_MS.slice(0, 1) : [];
       if (!placed.length && !this.view.state.field(markersField).length) return;
       const effects: StateEffect<unknown>[] = [setMarkers.of(placed)];
       if (placed.length > 0 !== this.shown) {
